@@ -1,8 +1,24 @@
 package org.scalafmt.diff
 
+import scala.meta.Tree
 import scala.util.Try
 
-case class Addition(startLine: Int, lineCount: Int)
+import org.scalafmt.config.ScalafmtConfig
+import org.scalafmt.internal.FormatOps
+import org.scalafmt.internal.FormatToken
+import org.scalafmt.util.logger
+
+case class FormatTokenRange(start: FormatToken, end: FormatToken) {
+  def contains(tok: FormatToken): Boolean = {
+    val result = tok.left.start >= start.left.start && tok.right.end <= end.right.end
+    logger.elem(tok,result)
+    result
+  }
+  override def toString: String = s"$start <-> $end"
+}
+case class Addition(startLine: Int, lineCount: Int) {
+  def endLine = startLine + lineCount - 1
+}
 case class FileDiff(filename: String, additions: Seq[Addition])
 
 object FileDiff {
@@ -49,5 +65,35 @@ object FileDiff {
     }
     addLastFile()
     fileDiffs.result()
+  }
+
+  /** Returns the start and end FormatTokens corresponding to each addition. */
+  def getFormatTokenRanges(tokens: Array[FormatToken],
+                           additions: Seq[Addition]): Seq[FormatTokenRange] = {
+    val builder = Seq.newBuilder[FormatTokenRange]
+    val N = tokens.length
+    var curr = 0
+    def getLine(tok: FormatToken): Int = tok.right.pos.start.line + 1
+    def forwardToLine(line: Int): Unit = {
+      while (curr < N && getLine(tokens(curr)) < line) {
+        curr += 1
+      }
+      if (curr >= N) curr = N - 1 // edge case, EOF
+    }
+    additions.foreach { addition =>
+      forwardToLine(addition.startLine)
+      val start = curr
+      curr -= 1 // end can be same as start in case of multi-line token.
+      forwardToLine(addition.endLine + 1)
+      val end = curr
+      builder += FormatTokenRange(tokens(start), tokens(end))
+    }
+    builder.result()
+  }
+
+  def expandToEnclosingStatements(formatTokenRange: FormatTokenRange,
+                                  formatOps: FormatOps): FormatTokenRange = {
+    import formatTokenRange._
+    formatTokenRange
   }
 }
